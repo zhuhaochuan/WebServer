@@ -103,6 +103,7 @@ int main( int argc, char* argv[] )
     int epollfd = epoll_create( 5 );
     assert( epollfd != -1 );
     addfd( epollfd, listenfd, false );
+    //设定所有客户连接的绑定的内核事件表为主线程创建的事件表
     http_conn::m_epollfd = epollfd;
 
     while( true )
@@ -134,7 +135,7 @@ int main( int argc, char* argv[] )
                     show_error( connfd, "Internal server busy，现在外部服务器很忙！" );
                     continue;
                 }
-
+                //客户连接的初始化当中会将起注册到内核事件表当中
                 users[connfd].init( connfd, client_address );
             }
             //如果是用户出问题，挂起，对方关闭连接 就关闭该连接
@@ -145,8 +146,10 @@ int main( int argc, char* argv[] )
             //如果是用户文件描述符上有事件发生，将对应的读写事件加入线程池的阻塞队列当中交给线程池处理
             else if( events[i].events & EPOLLIN )
             {
-                if( users[sockfd].read() )
+                if( users[sockfd].read() )//主线程去将数据从内核态缓冲区读入用户缓冲区
                 {
+                	//线程池内部自己维持一个信号量　进行自动的生产者消费者运作
+                	//线程池当中的线程去处理已经读好的数据
                     pool->append( users + sockfd );
                 }
                 else
