@@ -72,7 +72,7 @@ int main( int argc, char* argv[] )
         return 1;
     }
 
-    //用户数组
+    //用户数组　一个非常大的桶可以放65535个连接　使用文件描述符进行映射。
     http_conn* users = new http_conn[ MAX_FD ];
     assert( users );
     int user_count = 0;
@@ -141,7 +141,7 @@ int main( int argc, char* argv[] )
             //如果是用户出问题，挂起，对方关闭连接 就关闭该连接
             else if( events[i].events & ( EPOLLRDHUP | EPOLLHUP | EPOLLERR ) )
             {
-                users[sockfd].close_conn();
+                users[sockfd].close_conn();//关闭连接在内核事件表当中删除该文件描述符
             }
             //如果是用户文件描述符上有事件发生，将对应的读写事件加入线程池的阻塞队列当中交给线程池处理
             else if( events[i].events & EPOLLIN )
@@ -159,7 +159,7 @@ int main( int argc, char* argv[] )
             }
             else if( events[i].events & EPOLLOUT )
             {
-            	//写事件发生
+            	//将用户缓冲区的数据写入内核缓冲区　如果写入出现问题或者是短连接就关闭连接。
                 if( !users[sockfd].write() )
                 {
                     users[sockfd].close_conn();

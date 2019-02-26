@@ -40,8 +40,8 @@ void addfd( int epollfd, int fd, bool one_shot )
 {
     epoll_event event;
     event.data.fd = fd;
-    event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-    if( one_shot )
+    event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;//采用的是ET边沿触发方式
+    if( one_shot )//一个socket上的事件只能被触发一次
     {
         event.events |= EPOLLONESHOT;
     }
@@ -157,7 +157,7 @@ http_conn::LINE_STATUS http_conn::parse_line()
 }
 
 //循环读取客户数据　直到无数据可读或者对方关闭连接
-//将数据从内核态读入用户态　不做任何计算和处理
+//将数据从内核态读入用户态　不做任何计算和处理　这里是非阻塞的读
 bool http_conn::read()
 {
 	//没有可读内容
@@ -169,13 +169,13 @@ bool http_conn::read()
     int bytes_read = 0;
     while( true )
     {
-    	//往读缓冲区读用户数据
+    	//往读缓冲区读用户数据　文件描述符　读缓冲区的位置和大小　flags参数
         bytes_read = recv( m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0 );
         if ( bytes_read == -1 )//出错返回－１
         {
-            if( errno == EAGAIN || errno == EWOULDBLOCK )
+            if( errno == EAGAIN || errno == EWOULDBLOCK )//表示当前没有数据可读　稍后再尝试　也就是当前的读事件带来的数据已经被读完了
             {
-                break;
+                break;//由于是非阻塞的读　所以此处跳出　循环
             }
             return false;
         }
@@ -401,7 +401,7 @@ void http_conn::unmap()
     }
 }
 
-//写HTTP响应　将用户缓冲区的数据写入内核缓冲区
+//写HTTP响应　将用户缓冲区的数据写入内核缓冲区　非阻塞的写
 bool http_conn::write()
 {
     int temp = 0;
@@ -416,10 +416,12 @@ bool http_conn::write()
 
     while( 1 )
     {
+    	//writev是集中写的函数　将几块不同的内存单元的内容　集中的写入目标的文件描述符
+    	//这里是２块内存单元　一块是放的HTTP响应　一块是放的　返回给客户的文件的内容
         temp = writev( m_sockfd, m_iv, m_iv_count );
         if ( temp <= -1 )
         {
-            if( errno == EAGAIN )
+            if( errno == EAGAIN )//没写完　还需要再次写
             {
                 modfd( m_epollfd, m_sockfd, EPOLLOUT );
                 return true;
@@ -433,15 +435,16 @@ bool http_conn::write()
         if ( bytes_to_send <= bytes_have_send )
         {
             unmap();
-            if( m_linger )
+            if( m_linger )//如果是长连接
             {
-                init();
+                init();//读写缓冲区清空　等待下一次的数据到来
                 modfd( m_epollfd, m_sockfd, EPOLLIN );
                 return true;
             }
             else
             {
-                modfd( m_epollfd, m_sockfd, EPOLLIN );
+            	//短连接　外部会将这个用户连接删除　　但是还会监听该文件描述符的读事件？
+                modfd( m_epollfd, m_sockfd, EPOLLIN );//这个貌似是没有必要的　因为外界会删除在内核事件表当中的该文件描述符
                 return false;
             }
         }
@@ -583,7 +586,7 @@ void http_conn::process()
 {
 	//分析HTTP请求得到　响应的返回码
     HTTP_CODE read_ret = process_read();
-    //如果是用户请求不完整　就修改该客户描述符的事件为等待读事件
+    //如果是用户请求不完整　就修改该客户描述符的事件为等待读事件　继续读入。
     if ( read_ret == NO_REQUEST )
     {
         modfd( m_epollfd, m_sockfd, EPOLLIN );
@@ -595,7 +598,7 @@ void http_conn::process()
     {
         close_conn();
     }
-
+    //在这里已经往用户缓冲区写好了　就修改事件　让主线程去写入内核缓冲区
     modfd( m_epollfd, m_sockfd, EPOLLOUT );
 }
 
